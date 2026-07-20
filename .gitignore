@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Generated screenshots (reproducible run artifacts, not source)
+*.png
+*.jpg
+*.jpeg
