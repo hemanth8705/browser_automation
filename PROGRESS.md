@@ -48,3 +48,24 @@ flow), so my visibility check correctly skipped the zero-size anchor and fell th
 the `<img>` itself instead — an emergent, *correct* behavior I didn't special-case for, and a
 small taste of why real browser-use's visibility/paint-order logic is so much more elaborate
 than mine: DOM layout has endless little quirks like this.
+
+## Phase 3 — LLM Layer: Gemini Function-Calling
+
+Built the layer that turns "here's a task and the page state" into a structured action
+instead of free text: `actions.py` defines each action (`go_to_url`, `click`, `input_text`,
+`scroll`, `done`) exactly once as a Pydantic model, and `gemini_client.build_tool()` turns
+those straight into Gemini `FunctionDeclaration`s via `model_json_schema()` — no hand-written
+schema to keep in sync with the Pydantic fields. `chat()` calls Gemini with
+`tool_config=FunctionCallingConfig(mode=ANY)`, which *forces* it to always return a function
+call instead of chatting back in plain text — important for an agent loop that always needs
+an action, never small talk. The genuinely interesting discovery while studying real
+browser-use: it does **not** use native function-calling for Gemini at all — it uses
+`response_schema`/JSON mode (ask for JSON matching a schema, then `json.loads()` it), almost
+certainly because that pattern is more portable across the 12+ providers it supports, whereas
+"native function-calling" looks different per vendor. We used Gemini's native mechanism
+instead since going Gemini-only means we can just lean on it directly — a good example of how
+"the more general codebase" and "the simpler single-purpose one" can make opposite, both-correct
+calls given their different constraints. Tested with a fake indexed element list and four
+different task phrasings (click, type text, navigate, and declare done) — Gemini picked the
+right action and the right index every time, and Pydantic's `.model_validate()` on the
+returned args gave back a real typed object, not a dict to keep guessing about.
