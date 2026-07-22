@@ -69,3 +69,24 @@ calls given their different constraints. Tested with a fake indexed element list
 different task phrasings (click, type text, navigate, and declare done) — Gemini picked the
 right action and the right index every time, and Pydantic's `.model_validate()` on the
 returned args gave back a real typed object, not a dict to keep guessing about.
+
+## Phase 4 — Tools / Actions Layer
+
+`registry.py` is the layer where the Pydantic action models from Phase 3 finally touch a
+real browser: `@action("click")` registers a handler under the exact same name as the
+`ACTIONS` dict, and an `assert set(REGISTRY) == set(ACTIONS)` at import time makes it
+impossible to add an action to one side and forget the other — drift becomes an immediate
+import-time crash instead of a confusing runtime `KeyError` three steps into an agent run.
+Each handler declares only the context it actually needs (`params`, plus `session` and/or
+`dom`) as named parameters, and `execute()` inspects the handler's signature and only passes
+along what it asked for — a tiny version of the dependency-injection trick real browser-use's
+registry does at much larger scale (it injects `browser_session`, `file_system`,
+`page_extraction_llm`, and more, matched by parameter name). Ran all five actions manually
+against a live Wikipedia page: `go_to_url` → `input_text` into the search box (found by index)
+→ `scroll` → `click` the search button (also by index) → landed on the real
+`Browser_automation` article → `done`. One real surprise along the way: my first target for
+this demo was DuckDuckGo's HTML search, and it actually blocked the headless browser with a
+"select all squares containing a duck" bot-challenge — a good reminder that real websites
+actively fight automation, and production browser-use has to deal with exactly this kind of
+thing (the `handle_browser_error` / retry logic I skimmed in Phase 4's source makes a lot
+more sense now that I've hit a live example of why it exists).
