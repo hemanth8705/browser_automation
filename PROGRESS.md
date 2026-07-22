@@ -90,3 +90,29 @@ this demo was DuckDuckGo's HTML search, and it actually blocked the headless bro
 actively fight automation, and production browser-use has to deal with exactly this kind of
 thing (the `handle_browser_error` / retry logic I skimmed in Phase 4's source makes a lot
 more sense now that I've hit a live example of why it exists).
+
+## Phase 5 — The Agent Loop ("it's alive")
+
+`agent.py` is where Phases 1-4 stop being separate parts and become one thing: `step()` does
+perceive (fresh `DomService` extraction) → think (`chat()` with a rebuilt state message) → act
+(`execute()`) → record, and `run()` just calls `step()` in a loop until `done` or `max_steps`.
+The single biggest design decision, copied from real browser-use's message manager, is that the
+conversation sent to Gemini is **always exactly two messages** — the system prompt plus one
+`UserMessage` that gets completely rebuilt every step (task + a one-line-per-step history +
+current URL + current element list) — never an ever-growing transcript of every past message.
+Old DOM snapshots are simply never resent; only today's. This is *the* answer to "won't context
+explode over a long run" and it's a much simpler trick than it sounds like from the outside.
+
+The genuinely exciting result: gave it the task "search Wikipedia for 'browser automation' and
+open the best match," with zero pre-scripted steps, and the FIRST run wasn't even a clean
+success story — it was better than one. Step 1 called `go_to_url(url='en.wikipedia.org')`
+(missing the `https://` scheme) and Playwright rejected it; that error text flowed into step 2's
+history, and the model retried with `https://en.wikipedia.org` on its own — nobody coded a
+URL-fixup rule, it just saw its own mistake and adapted, because the system prompt says "if the
+last action errored, don't repeat it, try something different." A few steps later a `click`
+timed out (the search suggestions dropdown likely covered the target), and it recovered again,
+clicked a different index, and correctly called `done` once it had actually landed on the
+article. A second run completed the same task in 5 clean steps with zero errors. This is the
+whole roadmap's thesis in one demo: an agent isn't "an LLM that never makes mistakes," it's a
+loop where mistakes become visible feedback instead of crashes — the self-correction isn't a
+separate feature, it falls straight out of "feed the error back in and ask again."
