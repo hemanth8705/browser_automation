@@ -116,3 +116,42 @@ article. A second run completed the same task in 5 clean steps with zero errors.
 whole roadmap's thesis in one demo: an agent isn't "an LLM that never makes mistakes," it's a
 loop where mistakes become visible feedback instead of crashes — the self-correction isn't a
 separate feature, it falls straight out of "feed the error back in and ask again."
+
+## Infrastructure — Structured Per-Run JSON Logging
+
+Not a roadmap phase, but needed the moment the agent stopped doing obviously-correct things:
+once step 4 timed out on a click, the natural next question was "what did the DOM actually look
+like right then, and what exactly did Gemini see?" — and scrollback console prints don't answer
+that once a run is more than a few steps long. `run_logger.py` gives every run one file,
+`logs/log_<date>_<time>.json`, and every meaningful function across every file (`BrowserSession`,
+`DomService`, `gemini_client`, `registry`, `Agent`) writes one entry into it tagged with exactly
+the file/function/event that produced it, plus whatever variables mattered — the full page HTML
+`DomService` read, the raw JS-extractor output before it became `InteractiveElement`s, the exact
+system+user messages sent to Gemini, the raw function-call response, the validated action, and
+the execution result or error. The file is rewritten after every single entry, not just at the
+end, so a hard crash still leaves the full trail up to the failure — directly answering "which
+step, which variable, first went wrong."
+
+Two real bugs turned up while building this, both more interesting than the logging code itself:
+
+1. **"Readable" isn't the same as "has newlines."** My first cut split long strings on `\n` so
+   they'd render as a JSON array instead of an escaped `\n`-soup blob. That works for the LLM
+   prompts, but real page HTML comes back from the browser **minified onto one giant line with
+   no `\n` at all** — Wikipedia's full HTML is 363,000 characters as effectively one "line." The
+   fix was real fixed-width word-wrapping (`textwrap.wrap` at 200 chars), not just splitting on
+   whatever whitespace happens to already be there. Lesson: when you're formatting for human
+   eyes, check your assumption against the ugliest real input, not the prompt text you tested
+   with first.
+
+2. **Fragmented logs from an implicit "start."** My first version had `Agent.run()` call
+   `start_run()`, which seemed natural — "a run starts when you call run()." But
+   `BrowserSession.start()` fires earlier, inside the demo script's `async with BrowserSession(...)`
+   block, and it also calls the logger — which auto-starts its own untagged run since nothing had
+   called `start_run()` yet. Result: two log files per invocation, with the browser-launch events
+   orphaned in one and everything else in another. The fix was to move `start_run()` to the
+   actual entry point (the top of each `phaseN_demo.py`'s `main()`, before the browser is even
+   constructed) and have `Agent.run()` just use whatever run is already active. The general
+   lesson: **"when does this unit of work start" is a question about the outermost caller, not
+   whichever function happens to have a convenient-sounding name** — a library-ish class
+   (`Agent`) shouldn't assume it owns the boundary of an operation that other code (the
+   `BrowserSession` construction) already started before it was ever called.

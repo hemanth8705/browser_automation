@@ -17,6 +17,8 @@ from pathlib import Path
 
 from playwright.async_api import Locator, Page
 
+from run_logger import get_logger
+
 _EXTRACTOR_JS = (Path(__file__).parent / "dom_extractor.js").read_text(encoding="utf-8")
 
 
@@ -41,16 +43,39 @@ class DomService:
         self._elements: list[InteractiveElement] = []
 
     async def get_interactive_elements(self) -> list[InteractiveElement]:
+        log = get_logger()
+
+        # The exact page we're looking at, before we touch it — the ground truth the JS
+        # extractor below is walking, so a wrong/empty result can be traced back to
+        # "the page didn't have what we thought" vs. "the extractor missed something".
+        html = await self.page.content()
+        log.log(
+            "dom_service.py", "DomService.get_interactive_elements", "page_html_captured",
+            url=self.page.url, html_length=len(html), html=html,
+        )
+
         raw = await self.page.evaluate(_EXTRACTOR_JS)
+        log.log(
+            "dom_service.py", "DomService.get_interactive_elements", "js_extractor_raw_output",
+            raw_count=len(raw), raw_elements=raw,
+        )
+
         self._elements = [
             InteractiveElement(index=item["index"], tag=item["tag"], text=item["text"], attributes=item["attributes"])
             for item in raw
         ]
+        log.log(
+            "dom_service.py", "DomService.get_interactive_elements", "elements_parsed",
+            elements=self._elements,
+        )
         return self._elements
 
     def to_string(self) -> str:
-        return "\n".join(el.to_line() for el in self._elements)
+        formatted = "\n".join(el.to_line() for el in self._elements)
+        get_logger().log("dom_service.py", "DomService.to_string", "formatted_element_list", formatted=formatted)
+        return formatted
 
     def resolve(self, index: int) -> Locator:
         """Map an index from the last extraction back to the live element."""
+        get_logger().log("dom_service.py", "DomService.resolve", "resolving_index", index=index)
         return self.page.locator(f'[data-baidx="{index}"]')

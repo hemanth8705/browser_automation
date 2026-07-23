@@ -10,9 +10,11 @@ from actions import ClickAction, DoneAction, GoToUrlAction, InputTextAction, Scr
 from browser_session import BrowserProfile, BrowserSession
 from dom_service import DomService
 from registry import execute
+from run_logger import start_run
 
 
 async def main() -> None:
+    start_run(task="phase4_demo: manually drive go_to_url/input_text/scroll/click/done")
     async with BrowserSession(BrowserProfile(headless=True)) as session:
         dom = DomService(session.get_page())
 

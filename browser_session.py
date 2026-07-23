@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, async_playwright
 
+from run_logger import get_logger
+
 
 @dataclass
 class BrowserProfile:
@@ -51,6 +53,11 @@ class BrowserSession:
         if self._page is not None:
             return  # already started; keep start() idempotent like real browser-use does
 
+        log = get_logger()
+        log.log(
+            "browser_session.py", "BrowserSession.start", "launching_browser",
+            headless=self.profile.headless, viewport=self.profile.viewport, user_agent=self.profile.user_agent,
+        )
         self._playwright = await async_playwright().start()
         self._browser = await self._playwright.chromium.launch(headless=self.profile.headless)
         self._context = await self._browser.new_context(
@@ -58,6 +65,7 @@ class BrowserSession:
             user_agent=self.profile.user_agent,
         )
         self._page = await self._context.new_page()
+        log.log("browser_session.py", "BrowserSession.start", "browser_started", page_url=self._page.url)
 
     def get_page(self) -> Page:
         if self._page is None:
@@ -65,12 +73,18 @@ class BrowserSession:
         return self._page
 
     async def navigate(self, url: str) -> None:
+        log = get_logger()
+        log.log("browser_session.py", "BrowserSession.navigate", "navigating", requested_url=url)
         await self.get_page().goto(url)
+        log.log("browser_session.py", "BrowserSession.navigate", "navigated", final_url=self.get_page().url)
 
     async def screenshot(self) -> bytes:
-        return await self.get_page().screenshot()
+        data = await self.get_page().screenshot()
+        get_logger().log("browser_session.py", "BrowserSession.screenshot", "screenshot_taken", size_bytes=len(data))
+        return data
 
     async def close(self) -> None:
+        get_logger().log("browser_session.py", "BrowserSession.close", "closing", had_page=self._page is not None)
         # Tear down in the reverse order things were created.
         if self._context is not None:
             await self._context.close()

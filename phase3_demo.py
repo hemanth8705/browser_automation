@@ -13,6 +13,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 from actions import ACTIONS  # noqa: E402
 from gemini_client import chat, parse_action  # noqa: E402
 from messages import SystemMessage, UserMessage  # noqa: E402
+from run_logger import start_run  # noqa: E402
 
 SYSTEM_PROMPT = """You are a browser automation agent. You are given a task and the current
 page's interactive elements as a numbered list. Call exactly one action that makes progress
@@ -26,6 +27,7 @@ FAKE_PAGE_STATE = """Current page interactive elements:
 
 
 def main() -> None:
+    start_run(task="phase3_demo: fake page state -> Gemini function call")
     task = "Click the login button"
     messages = [
         SystemMessage(SYSTEM_PROMPT),

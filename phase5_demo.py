@@ -13,6 +13,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from agent import Agent  # noqa: E402
 from browser_session import BrowserProfile, BrowserSession  # noqa: E402
+from run_logger import start_run  # noqa: E402
 
 TASK = (
     "Go to youtube and use the search box to search for "
@@ -22,6 +23,9 @@ TASK = (
 
 
 async def main() -> None:
+    # Start the run log BEFORE the browser launches, so browser-startup events land in
+    # the same file as everything after — not orphaned into a separate untagged log.
+    start_run(task=TASK)
     async with BrowserSession(BrowserProfile(headless=False)) as session:
         agent = Agent(TASK, session)
         result = await agent.run(max_steps=8)

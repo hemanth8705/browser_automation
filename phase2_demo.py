@@ -8,9 +8,11 @@ import asyncio
 
 from browser_session import BrowserProfile, BrowserSession
 from dom_service import DomService
+from run_logger import start_run
 
 
 async def main() -> None:
+    start_run(task="phase2_demo: extract indexed elements + log in via index resolution")
     async with BrowserSession(BrowserProfile(headless=True)) as session:
         page = session.get_page()
         await page.goto("https://the-internet.herokuapp.com/login")

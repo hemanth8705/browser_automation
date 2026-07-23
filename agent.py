@@ -22,6 +22,7 @@ from gemini_client import chat, parse_action
 from messages import SystemMessage, UserMessage
 from prompts import SYSTEM_PROMPT
 from registry import execute
+from run_logger import get_logger
 
 
 @dataclass
@@ -49,157 +50,70 @@ class Agent:
 
     def _build_user_message(self, elements_str: str) -> str:
         history_str = "\n".join(r.to_line() for r in self.history) or "(no actions taken yet)"
-
-        print("\nBuilding user message...")
-        print("Task:")
-        print(self.task)
-
-        print("\nHistory String:")
-        print(history_str)
-
-        print("\nCurrent URL:")
-        print(self.session.get_page().url)
-
-        print("\nElements String:")
-        print(elements_str)
-
-        message = (
+        return (
             f"Task: {self.task}\n\n"
             f"History so far:\n{history_str}\n\n"
             f"Current URL: {self.session.get_page().url}\n"
             f"Current page interactive elements:\n{elements_str}"
         )
 
-        return message
-
-
     async def step(self, step_number: int) -> StepRecord:
-        """One perceive -> think -> act cycle."""
+        """One perceive -> think -> act cycle. Console stays terse (one banner + one result
+        line); everything a debugger would actually want — full HTML, raw JS output, the
+        exact prompt, the raw LLM response — goes to the structured JSON run log instead."""
+        log = get_logger()
+        print(f"\n{'=' * 60}\nSTEP {step_number}\n{'=' * 60}")
 
-        print("\n" + "=" * 100)
-        print(f"STEP {step_number}")
-        print("=" * 100)
-
-        # -----------------------------
-        # PERCEPTION
-        # -----------------------------
+        # PERCEIVE
         await self.dom.get_interactive_elements()
         elements_str = self.dom.to_string() or "(no interactive elements found)"
 
-        print("\n[Current URL]")
-        print(self.session.get_page().url)
-
-        print("\n[Interactive Elements]")
-        print(elements_str)
-
-        # -----------------------------
-        # BUILD USER MESSAGE
-        # -----------------------------
+        # THINK
         user_message = self._build_user_message(elements_str)
-
-        print("\n[History]")
-        if self.history:
-            for record in self.history:
-                print(record.to_line())
-        else:
-            print("(no actions taken yet)")
-
-        print("\n[System Prompt]")
-        print(SYSTEM_PROMPT)
-
-        print("\n[User Prompt Sent To LLM]")
-        print(user_message)
-
-        # -----------------------------
-        # BUILD MESSAGE LIST
-        # -----------------------------
-        messages = [
-            SystemMessage(SYSTEM_PROMPT),
-            UserMessage(user_message),
-        ]
-
-        print("\n[Messages Passed To chat()]")
-        for i, msg in enumerate(messages):
-            print("-" * 80)
-            print(f"Message {i}")
-            print(f"Type: {type(msg).__name__}")
-            print(msg)
-
-        # -----------------------------
-        # TOOLS
-        # -----------------------------
-        print("\n[Registered Tools]")
-        for tool in ACTIONS:
-            print(tool)
-
-        print("\nCalling Gemini...")
+        log.log(
+            "agent.py", "Agent.step", "step_start",
+            step_number=step_number,
+            current_url=self.session.get_page().url,
+            history=list(self.history),
+            system_prompt=SYSTEM_PROMPT,
+            user_message=user_message,
+        )
+        messages = [SystemMessage(SYSTEM_PROMPT), UserMessage(user_message)]
         call = chat(messages, ACTIONS, model=self.model)
 
-        print("\n[Raw LLM Response]")
-        print(call)
-
+        # ACT
         try:
-            print("\nParsing action...")
             action = parse_action(call, ACTIONS)
-
-            print("\n[Parsed Action]")
-            print(action)
-
-            print("\nTool Name:")
-            print(call.name)
-
-            print("\nTool Arguments:")
-            print(call.args)
-
-            print("\nExecuting Tool...")
-            result = await execute(
-                call.name,
-                action,
-                session=self.session,
-                dom=self.dom,
-            )
-
-            print("\n[Tool Result]")
-            print(result)
-
-            record = StepRecord(
-                step_number,
-                call.name,
-                call.args,
-                result,
-            )
-
-        except Exception as exc:
-            print("\n[ERROR]")
-            print(type(exc).__name__)
-            print(exc)
-
-            record = StepRecord(
-                step_number,
-                call.name,
-                call.args,
-                f"{type(exc).__name__}: {exc}",
-                error=True,
-            )
+            result = await execute(call.name, action, session=self.session, dom=self.dom)
+            record = StepRecord(step_number, call.name, call.args, result)
+        except Exception as exc:  # deliberately broad: let the LLM see ANY failure and adapt next step
+            record = StepRecord(step_number, call.name, call.args, f"{type(exc).__name__}: {exc}", error=True)
 
         self.history.append(record)
-
-        print("\n[Updated History]")
-        for r in self.history:
-            print(r.to_line())
-
-        print("=" * 100)
-        print("END STEP")
-        print("=" * 100 + "\n")
-
+        log.log("agent.py", "Agent.step", "step_end", step_number=step_number, record=record)
+        print(record.to_line())
         return record
-    
-    
+
     async def run(self, max_steps: int = 15) -> str:
-        """Loop until `done` is called or max_steps is hit."""
-        for step_number in range(1, max_steps + 1):
-            record = await self.step(step_number)
-            print(record.to_line())
-            if record.action == "done" and not record.error:
-                return record.result
-        return f"Stopped after {max_steps} steps without calling done."
+        """Loop until `done` is called or max_steps is hit.
+
+        Logs into whatever run is already active (started by the entry point, e.g. a demo
+        script, via `run_logger.start_run()` before the browser was even launched) rather
+        than starting its own — otherwise the browser-launch events that happen before
+        `.run()` is called would be orphaned into a separate untagged log file.
+        """
+        log = get_logger()
+        log.log("agent.py", "Agent.run", "run_start", task=self.task, max_steps=max_steps, model=self.model)
+        try:
+            for step_number in range(1, max_steps + 1):
+                record = await self.step(step_number)
+                if record.action == "done" and not record.error:
+                    log.finish("done", record.result)
+                    return record.result
+            result = f"Stopped after {max_steps} steps without calling done."
+            log.finish("max_steps_reached", result)
+            return result
+        except Exception as exc:
+            log.log("agent.py", "Agent.run", "run_crashed", error_type=type(exc).__name__, error=str(exc))
+            log.finish("crashed", str(exc))
+            raise

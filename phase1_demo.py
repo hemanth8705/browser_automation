@@ -7,9 +7,11 @@ import asyncio
 from pathlib import Path
 
 from browser_session import BrowserProfile, BrowserSession
+from run_logger import start_run
 
 
 async def main() -> None:
+    start_run(task="phase1_demo: launch, navigate, screenshot, close")
     profile = BrowserProfile(headless=True)
     session = BrowserSession(profile)
 

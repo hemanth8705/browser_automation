@@ -23,6 +23,7 @@ from google.genai import types
 from pydantic import BaseModel
 
 from messages import Message, SystemMessage, UserMessage
+from run_logger import get_logger
 
 
 @dataclass
@@ -41,6 +42,14 @@ def build_tool(actions: dict[str, type[BaseModel]]) -> types.Tool:
         )
         for name, model in actions.items()
     ]
+    get_logger().log(
+        "gemini_client.py", "build_tool", "tool_schema_built",
+        action_names=list(actions.keys()),
+        declarations=[
+            {"name": d.name, "description": d.description, "parameters_json_schema": d.parameters_json_schema}
+            for d in declarations
+        ],
+    )
     return types.Tool(function_declarations=declarations)
 
 
@@ -55,8 +64,17 @@ def chat(
     model: str = "gemini-2.5-flash",
 ) -> ActionCall:
     """Send the conversation + available actions to Gemini; force exactly one action back."""
+    log = get_logger()
     system_instruction = next((m.content for m in messages if isinstance(m, SystemMessage)), None)
     contents = [_to_content(m) for m in messages if not isinstance(m, SystemMessage)]
+
+    log.log(
+        "gemini_client.py", "chat", "llm_request",
+        model=model,
+        system_instruction=system_instruction,
+        messages=[{"role": type(m).__name__, "content": m.content} for m in messages],
+        available_actions=list(actions.keys()),
+    )
 
     client = genai.Client()
     response = client.models.generate_content(
@@ -72,6 +90,22 @@ def chat(
     )
 
     part = response.candidates[0].content.parts[0]
+    raw_text = None
+    if part.function_call is None:
+        # Only worth the (SDK-warns-on-function-call-responses) cost of reading .text when
+        # there's no function call — that's exactly the failure case where seeing what
+        # Gemini said instead is genuinely useful for debugging.
+        try:
+            raw_text = response.text
+        except Exception:
+            raw_text = None
+    log.log(
+        "gemini_client.py", "chat", "llm_response",
+        function_call_name=getattr(part.function_call, "name", None),
+        function_call_args=dict(part.function_call.args) if part.function_call else None,
+        raw_text=raw_text,
+    )
+
     if part.function_call is None:
         raise ValueError(f"Gemini did not return a function call: {part!r}")
     return ActionCall(name=part.function_call.name, args=dict(part.function_call.args))
@@ -79,4 +113,9 @@ def chat(
 
 def parse_action(call: ActionCall, actions: dict[str, type[BaseModel]]) -> BaseModel:
     """Validate the raw args Gemini sent back into the actual Pydantic action model."""
-    return actions[call.name].model_validate(call.args)
+    action = actions[call.name].model_validate(call.args)
+    get_logger().log(
+        "gemini_client.py", "parse_action", "action_validated",
+        action_name=call.name, validated=action,
+    )
+    return action
